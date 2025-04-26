@@ -64,7 +64,15 @@ CREATE TABLE `dataentry` (
   `TEMP_CASE` decimal(6,1) NOT NULL DEFAULT 0.0 COMMENT 'Celcius',  
   PRIMARY KEY (`ID`)  
 );
+
+-- Optional but recommended: Add an index on the CREATED column for better query performance  
+ALTER TABLE dataentry ADD INDEX idx_created (CREATED);  
+
+-- Create a read-only user for the weather station service (optional)  
+-- Replace 'password' with a secure password  
+-- GRANT SELECT ON weather.* TO 'weather_reader'@'localhost' IDENTIFIED BY 'password';  
 ```
+
 # Running the Service
 Manual start
 `python weather_station_service.py`
