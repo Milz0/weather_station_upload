@@ -1,0 +1,48 @@
+database:
+  host: database
+  user: weather_user
+  password: virtual-weather-only
+  database: weather
+  port: 3306
+max_observation_age_seconds: 600
+services:
+  wunderground:
+    enabled: true
+    interval: 60
+    credentials:
+      id: SIMULATED
+      password: SIMULATED
+      url: http://mock-services:8080/wunderground
+  weathercloud:
+    enabled: true
+    interval: 60
+    credentials:
+      id: SIMULATED
+      key: SIMULATED
+      url: http://mock-services:8080/weathercloud
+  windy:
+    enabled: true
+    interval: 60
+    credentials:
+      url: http://mock-services:8080/windy?
+  pwsweather:
+    enabled: true
+    interval: 60
+    credentials:
+      id: SIMULATED
+      password: SIMULATED
+      url: http://mock-services:8080/pwsweather
+      software: VirtualWeatherStation
+  metoffice:
+    enabled: true
+    interval: 60
+    credentials:
+      siteid: SIMULATED
+      auth_key: SIMULATED
+      url: http://mock-services:8080/metoffice
+      software: VirtualWeatherStation
+logging:
+  level: INFO
+  file: weather_station.log
+  max_size: 10485760
+  backup_count: 5
