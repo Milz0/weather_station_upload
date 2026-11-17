@@ -30,8 +30,8 @@ DB_CONFIG = {
 }
 
 # Update intervals (in minutes)
-CURRENT_UPDATE_INTERVAL = 5  # Update current conditions every 15 minutes
-FORECAST_UPDATE_INTERVAL = 180  # Update forecast every 6 hours (360 minutes)
+CURRENT_UPDATE_INTERVAL = 5  # Update current conditions every 5 minutes
+FORECAST_UPDATE_INTERVAL = 180  # Update forecast every 3 hours
 FORECAST_DAYS = 7  # Number of days to forecast
 
 # API parameters
@@ -177,6 +177,7 @@ def create_database_tables():
         logger.info("Database tables created or already exist")
     except Exception as e:
         logger.error(f"Error creating database tables: {e}")
+        raise
     finally:
         cursor.close()
         connection.close()
@@ -202,7 +203,7 @@ def get_weather_forecast(current_only=False):
         url = base_url
 
     try:
-        response = requests.get(url, params=params)
+        response = requests.get(url, params=params, timeout=(5, 20))
 
         if response.status_code == 200:
             logger.info(f"Successfully retrieved weather data for {LOCATION} ({'current only' if current_only else 'full forecast'})")
@@ -272,6 +273,7 @@ def update_daily_forecast(connection, data, location):
     except Exception as e:
         logger.error(f"Error updating daily forecast: {e}")
         connection.rollback()
+        raise
     finally:
         cursor.close()
 
@@ -333,6 +335,7 @@ def update_hourly_forecast(connection, data, location):
     except Exception as e:
         logger.error(f"Error updating hourly forecast: {e}")
         connection.rollback()
+        raise
     finally:
         cursor.close()
 
@@ -389,6 +392,7 @@ def update_current_conditions(connection, data, location):
     except Exception as e:
         logger.error(f"Error updating current conditions: {e}")
         connection.rollback()
+        raise
     finally:
         cursor.close()
 
@@ -430,6 +434,7 @@ def update_weather_alerts(connection, data, location):
     except Exception as e:
         logger.error(f"Error updating weather alerts: {e}")
         connection.rollback()
+        raise
     finally:
         cursor.close()
 
