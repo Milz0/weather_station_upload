@@ -1,0 +1,6 @@
+FROM python:3.12-slim
+WORKDIR /app
+RUN pip install --no-cache-dir mysql-connector-python==9.2.0 requests==2.32.3 PyYAML==6.0.2
+COPY weather_services.py weather_quality.py ./
+RUN chown -R 65534:65534 /app
+USER 65534:65534
