@@ -9,6 +9,8 @@ database:
   database: weather  
   port: 3306  # Default MySQL port  
 
+max_observation_age_seconds: 600  # Do not upload sensor readings older than 10 minutes
+
 # Weather services configuration  
 services:  
   # Weather Underground  
