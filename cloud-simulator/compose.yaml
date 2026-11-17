@@ -1,0 +1,75 @@
+name: virtual-weather-station
+services:
+  database:
+    image: mariadb:11.4
+    restart: unless-stopped
+    environment:
+      MARIADB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-local-root-only}
+      MARIADB_DATABASE: weather
+      MARIADB_USER: weather_user
+      MARIADB_PASSWORD: ${DB_PASSWORD:-virtual-weather-only}
+      TZ: UTC
+    volumes:
+      - weather-db:/var/lib/mysql
+      - ../weather_db_template.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "healthcheck.sh --connect --innodb_initialized"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks: [weather-internal]
+
+  sensor:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    command: ["python", "-u", "sensor.py"]
+    environment:
+      DB_HOST: database
+      DB_PASSWORD: ${DB_PASSWORD:-virtual-weather-only}
+      SENSOR_INTERVAL_SECONDS: ${SENSOR_INTERVAL_SECONDS:-15}
+      SENSOR_SEED: ${SENSOR_SEED:-42}
+      TZ: UTC
+    depends_on:
+      database:
+        condition: service_healthy
+    networks: [weather-internal]
+
+  mock-services:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    command: ["python", "-u", "mock_services.py"]
+    environment:
+      MOCK_FAILURE_RATE: ${MOCK_FAILURE_RATE:-0}
+      TZ: UTC
+    networks: [weather-internal]
+
+  uploader:
+    build:
+      context: ..
+      dockerfile: cloud-simulator/Dockerfile.uploader
+    restart: unless-stopped
+    working_dir: /app
+    command: ["python", "-u", "weather_services.py"]
+    volumes:
+      - ./weather_services_config.yaml:/app/weather_services_config.yaml:ro
+    environment:
+      TZ: UTC
+    depends_on:
+      database:
+        condition: service_healthy
+      mock-services:
+        condition: service_started
+      sensor:
+        condition: service_started
+    networks: [weather-internal]
+
+volumes:
+  weather-db:
+
+networks:
+  weather-internal:
+    internal: true
