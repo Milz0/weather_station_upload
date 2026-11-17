@@ -8,6 +8,8 @@ import mysql.connector
 from datetime import datetime
 import logging
 import traceback
+from logging.handlers import RotatingFileHandler
+from weather_quality import validate_observation
 
 # Configure logging
 logging.basicConfig(
@@ -15,7 +17,7 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
         logging.StreamHandler(),
-        logging.FileHandler("weather_station.log")
+        RotatingFileHandler("weather_station.log", maxBytes=10485760, backupCount=5)
     ]
 )
 logger = logging.getLogger("WeatherStation")
@@ -43,6 +45,7 @@ class Database:
                         user=self.config['user'],
                         password=self.config['password'],
                         database=self.config['database'],
+                        port=int(self.config.get('port', 3306)),
                         connection_timeout=10,
                         autocommit=True  # Enable autocommit to avoid transaction issues
                     )
@@ -76,6 +79,9 @@ def load_config():
 
 """Validate the loaded configuration"""
 def validate_config(config):
+    if not isinstance(config, dict):
+        logger.error('Configuration must be a YAML mapping')
+        return False
     # Check for services section
     if 'services' not in config:
         logger.error("Missing 'services' section in configuration file.")
@@ -116,6 +122,14 @@ def validate_config(config):
 
         if 'credentials' not in service_config:
             logger.error(f"Missing 'credentials' field for service: {service}")
+            return False
+
+        try:
+            if int(service_config['interval']) < 30:
+                logger.error('Service %s interval must be at least 30 seconds', service)
+                return False
+        except (ValueError, TypeError):
+            logger.error('Invalid interval for %s', service)
             return False
 
         # Check service-specific credential requirements
@@ -185,12 +199,13 @@ def get_weather_data():
             logger.debug("Retrieving current weather data from database")
 
             # Temperature
-            cursor.execute("SELECT AIR_TEMP FROM dataentry ORDER BY id DESC LIMIT 1;")
+            cursor.execute("SELECT AIR_TEMP, CREATED FROM dataentry ORDER BY id DESC LIMIT 1;")
             result = cursor.fetchone()
             if result is None or result[0] is None:
                 logger.warning("No temperature data available")
                 return None
             data['temperature'] = float(result[0])
+            data['timestamp'] = result[1]
 
             # Feels like temperature
             cursor.execute("SELECT FEELS_LIKE FROM dataentry ORDER BY id DESC LIMIT 1;")
@@ -235,14 +250,14 @@ def get_weather_data():
 
             # Wind direction (2 min avg)
             cursor.execute(
-                "SELECT COALESCE(avg(WIND_DIRECTION),0) FROM dataentry WHERE CREATED BETWEEN date_add(now(), interval -2 minute) and now();"
+                "SELECT MOD(DEGREES(ATAN2(SUM(SIN(RADIANS(WIND_DIRECTION))), SUM(COS(RADIANS(WIND_DIRECTION))))) + 360, 360) FROM dataentry WHERE CREATED BETWEEN date_add(now(), interval -2 minute) and now();"
             )
             result = cursor.fetchone()
             if result is None:
                 logger.warning("No wind direction (2min) data available")
                 data['wind_dir_2min'] = 0.0
             else:
-                data['wind_dir_2min'] = float(result[0])
+                data['wind_dir_2min'] = float(result[0]) if result[0] is not None else 0.0
 
             # Wind speed (2 min avg)
             cursor.execute(
@@ -279,14 +294,14 @@ def get_weather_data():
 
             # Wind direction (10 min avg)
             cursor.execute(
-                "SELECT COALESCE(avg(WIND_DIRECTION),0) FROM dataentry WHERE CREATED BETWEEN date_add(now(), interval -10 minute) and now();"
+                "SELECT MOD(DEGREES(ATAN2(SUM(SIN(RADIANS(WIND_DIRECTION))), SUM(COS(RADIANS(WIND_DIRECTION))))) + 360, 360) FROM dataentry WHERE CREATED BETWEEN date_add(now(), interval -10 minute) and now();"
             )
             result = cursor.fetchone()
             if result is None:
                 logger.warning("No wind direction (10min) data available")
                 data['wind_dir_10min'] = 0.0
             else:
-                data['wind_dir_10min'] = float(result[0])
+                data['wind_dir_10min'] = float(result[0]) if result[0] is not None else 0.0
 
             # Daily rainfall
             cursor.execute(
@@ -334,19 +349,21 @@ def get_weather_data():
 
             # Wind direction (5 min avg) - for services that need it
             cursor.execute(
-                "SELECT COALESCE(avg(WIND_DIRECTION),0) FROM dataentry WHERE CREATED BETWEEN date_add(now(), interval -5 minute) and now();"
+                "SELECT MOD(DEGREES(ATAN2(SUM(SIN(RADIANS(WIND_DIRECTION))), SUM(COS(RADIANS(WIND_DIRECTION))))) + 360, 360) FROM dataentry WHERE CREATED BETWEEN date_add(now(), interval -5 minute) and now();"
             )
             result = cursor.fetchone()
             if result is None:
                 logger.warning("No wind direction (5min) data available")
                 data['wind_dir_5min'] = 0.0
             else:
-                data['wind_dir_5min'] = float(result[0])
+                data['wind_dir_5min'] = float(result[0]) if result[0] is not None else 0.0
 
-            # Current timestamp
-            data['timestamp'] = datetime.now()
-
-            conn.commit()
+            # Preserve the actual observation timestamp; never re-date stale data.
+            try:
+                validate_observation(data, max_age_seconds=int(CONFIG.get('max_observation_age_seconds', 600)))
+            except (ValueError, TypeError) as exc:
+                logger.warning('Skipping invalid weather observation: %s', exc)
+                return None
 
             # Log summary of retrieved data
             logger.info(f"Retrieved weather data: Temp: {data['temperature']}°C, Pressure: {data['pressure_sea']} hPa, " +
@@ -423,14 +440,14 @@ def submit_to_weathercloud(data):
     }
 
     try:
-        logger.debug(f"Sending request to Weathercloud with params: {params}")
+        logger.debug('Sending request to Weathercloud (credentials redacted)')
         r = requests.get(config['url'], params=params, timeout=15)
         logger.info(f"Weathercloud update: {r.status_code} - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         if r.status_code != 200:
             logger.warning(f"Weathercloud returned non-200 status: {r.status_code}, response: {r.text}")
         else:
             logger.info(f"Successfully updated Weathercloud")
-        return True
+        return r.ok
     except requests.exceptions.RequestException as e:
         logger.error(f"Weathercloud update failed: {str(e)}")
         return False
@@ -498,7 +515,7 @@ def submit_to_wunderground(data):
             logger.warning(f"Weather Underground returned non-200 status: {r.status_code}, response: {r.text}")
         else:
             logger.info(f"Successfully updated Weather Underground")
-        return True
+        return r.ok
     except requests.exceptions.RequestException as e:
         logger.error(f"Weather Underground update failed: {str(e)}")
         return False
@@ -555,7 +572,7 @@ def submit_to_windy(data):
     )
 
     try:
-        logger.debug(f"Sending request to Windy with URL: {url}")
+        logger.debug('Sending request to Windy (token redacted)')
         r = requests.get(url, timeout=15)
         logger.info(f"Windy update: {r.status_code} - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
@@ -565,9 +582,9 @@ def submit_to_windy(data):
             logger.info(f"Successfully updated Windy")
 
         # For debugging
-        logger.debug(f"Windy request URL: {r.request.url}")
+        logger.debug('Windy request completed')
 
-        return True
+        return r.ok
     except requests.exceptions.RequestException as e:
         logger.error(f"Windy update failed: {str(e)}")
         return False
@@ -636,7 +653,7 @@ def submit_to_pwsweather(data):
             logger.warning(f"PWSWeather returned non-200 status: {r.status_code}, response: {r.text}")
         else:
             logger.info(f"Successfully updated PWSWeather")
-        return True
+        return r.ok
     except requests.exceptions.RequestException as e:
         logger.error(f"PWSWeather update failed: {str(e)}")
         return False
@@ -704,7 +721,7 @@ def submit_to_metoffice(data):
             logger.warning(f"Met Office returned non-200 status: {r.status_code}, response: {r.text}")
         else:
             logger.info(f"Successfully updated Met Office")
-        return True
+        return r.ok
     except requests.exceptions.RequestException as e:
         logger.error(f"Met Office update failed: {str(e)}")
         return False
