@@ -67,9 +67,31 @@ services:
         condition: service_started
     networks: [weather-internal]
 
+  weather-api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    restart: unless-stopped
+    environment:
+      API_TOKEN: ${API_TOKEN:?Set a random API_TOKEN of at least 32 characters in cloud-simulator/.env}
+      INSTALLATION_ID: ${INSTALLATION_ID:-ws01}
+      RATE_LIMIT_PER_MINUTE: ${RATE_LIMIT_PER_MINUTE:-120}
+      DB_HOST: database
+      DB_USER: weather_user
+      DB_PASSWORD: ${DB_PASSWORD:-virtual-weather-only}
+      DB_NAME: weather
+      TZ: UTC
+    ports:
+      - "127.0.0.1:8000:8000"
+    depends_on:
+      database:
+        condition: service_healthy
+    networks: [weather-internal, api-egress]
+
 volumes:
   weather-db:
 
 networks:
   weather-internal:
     internal: true
+  api-egress:
