@@ -205,6 +205,8 @@ def history(source: str = Query(...), from_: str = Query(..., alias="from"),
             to: str | None = None, limit: int = Query(500, ge=1, le=2000),
             cursor: str | None = None):
     source_guard(source)
+    if cursor and not to:
+        raise HTTPException(400, {"code": "INVALID_CURSOR", "message": "Explicit to timestamp required when paging"})
     start = parse_time(from_, "from")
     end = parse_time(to, "to") if to else datetime.now(timezone.utc).replace(microsecond=0)
     if end < start or end - start > timedelta(days=31) or end > datetime.now(timezone.utc) + timedelta(seconds=1):
